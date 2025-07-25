@@ -64,7 +64,7 @@ std::map<int, std::string> buildFileList(FILE* file, const char* smallfName){
 			fileName += (char)getc(file);
 		}
 		std::cout << "Located file " << fileName << " at offset " << offset << std::endl;
-		fileList.insert({offset, folderName + "\\" + fileName});
+                fileList.insert({offset, folderName + "/" + fileName});
 
 		getc(file); // Advance to next file
 	}
