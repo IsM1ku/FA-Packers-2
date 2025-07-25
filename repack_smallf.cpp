@@ -24,7 +24,7 @@ std::map<std::string, size_t> getFiles(std::string folderName){
 			filePath = filePath.substr(folderName.length()+1, std::string::npos);
 
 			std::cout << "Located file " << filePath << " of size " << fileSize << " bytes" << std::endl;
-			std::replace(filePath.begin(), filePath.end(), '/', '\\');
+                        std::replace(filePath.begin(), filePath.end(), '\\', '/');
 			files.insert({filePath, fileSize});
 		}
 	}
