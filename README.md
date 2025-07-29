@@ -51,12 +51,15 @@ while ensuring frame alignment.
 ### Validate
 
 ```
-./validate_yuk <stream_prefix>
+./validate_yuk <stream_prefix> [--raw] [--log <file>]
 ```
 
 `<stream_prefix>` should be the path and base name of extracted ATRAC files
 (e.g. `out/atrac/music_Stream`). The validator checks each stream for a valid
 RIFF header and that its length is a multiple of the 0x180 ATRAC frame size.
+Use `--raw` if the streams lack a RIFF header. When `--log` is supplied, all
+output is also written to the specified file along with a per-stream summary
+of bytes and frame counts.
 
 ## Notes
 
