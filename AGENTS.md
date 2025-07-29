@@ -1,73 +1,75 @@
 # AGENTS.md
 
-## 🛠️ Agent: YUK Stream Validator and Diagnostic Logger
+## 🛠️ Agent: Final Review of `extract_yuk` Audio Tool
 
 ### Description
-This agent improves the `.yuk` audio modding pipeline by extending the stream validation tooling. It adds detailed analysis, per-stream byte/frame data, and the ability to log all results to an external file — simplifying debugging and versioned testing.
+This agent audited the final compiled version of the Full Auto 2 `.yuk` extractor (`extract_yuk.exe`). Although stream alignment and byte-level correctness have been achieved, the resulting `.wav` files still contain unwanted audio bleed due to incomplete metadata passed to `vgmstream`.
 
 ---
 
-## ✅ Features Added to `validate_yuk.cpp`
+## 🧩 Current Issues
 
-### 1. **Log File Output**
-- New `--log <filename>` argument.
-- Writes all validation output to a log file instead of just stdout.
-- Can be used with or without `--raw`.
-
-### 2. **Per-Stream Size and Frame Count**
-- Outputs:
-  - Total stream data size (after optional header)
-  - Number of full 0x180-byte ATRAC3 frames
-  - Remainder in bytes
-- Helps pinpoint overflows, misalignment, and inconsistencies.
-
-### 3. **RIFF Header Check Enhancements**
-- Hex-dumps the unexpected header bytes (e.g. `0x41424344`) for easier comparison.
-- Skipped when `--raw` is passed.
-
-### 4. **Validation Summary**
-- At the end of the log or console output, prints a table:
-  ```
-  Summary:
-  Stream0: 2323200 bytes, 6050 frames ✓
-  Stream1: 2323504 bytes, 6050 frames ✗ (remainder 304)
-  ...
-  ```
-
-### 5. **Timestamped Logs**
-- Automatically inserts a timestamp like:
-  ```
-  Validation started: 2025-07-29 19:42:17
-  ```
+### 1. 🔴 Inaccurate `.txth` Metadata
+The tool generates a basic `.atrac.txth` file with:
+```text
+num_samples = data_size
+```
+This is **incorrect**, as `data_size` is in bytes. ATRAC3 decoding requires accurate frame-based sample calculation:
+```text
+num_samples = (data_size / 0x180) * 1024
+```
+Failing to provide this causes `vgmstream` to decode past the last valid frame, producing audio bleed or noise at the end of each `.wav` file.
 
 ---
 
-## 🧪 Usage Example
+### 2. ⚠️ All Streams Use Shared `.txth`
+The extractor currently creates a single `.atrac.txth` and applies it universally. However, stream sizes and frame counts could differ slightly. Validation logs confirm matching sizes **for now**, but future edge cases (e.g. modded `.yuk`s) may require individual `.txth` files.
 
-```bash
-validate_yuk burningworldmasaugrace --raw --log validate_log.txt
+---
+
+## ✅ Recommended Fixes
+
+### ✅ Patch `writeHeaderInfo()` to Calculate Sample Count
+Update the function to generate the following metadata:
+
+```text
+codec = ATRAC3
+sample_rate = 48000
+channels = 2
+start_offset = 0
+interleave = 0x180
+frame_size = 0x180
+samples_per_frame = 1024
+num_samples = (data_size / 0x180) * 1024
 ```
 
-Output:
-- Written to `validate_log.txt`
-- Includes full per-stream breakdown
-- Summary at the end shows counts of aligned streams and header validity
+Pass `dataSize` from the extractor per stream and compute `num_samples` from it.
 
 ---
 
-## 🧠 Benefits
+### ✅ Optional Enhancements
 
-- Debugging mismatched audio or stream desyncs is faster
-- Supports reproducible logs for bug reporting
-- Helps catch partial frame injection bugs in `extract_yuk` or `compress_yuk`
-- Makes CI-style test scripts possible for mod pack validation
+- Write one `.txth` file per stream with matching filename.
+- Allow the user to disable `.wav` generation (for faster extraction).
+- Auto-detect and warn if stream headers (`.hdr`) differ in the first 464 bytes.
+
+---
+
+## 🧪 Validation Reference
+
+- Used `validate_yuk --raw --log` to confirm stream frame alignment.
+- All 8 extracted `.atrac` streams are:
+  - Byte aligned
+  - Proper size
+  - But WAV output still exhibits decoding artifacts
+- Trimming ends cleanly once `num_samples` is correctly defined.
 
 ---
 
 ## 🔄 Next Steps
 
-- Add option to compare `.hdr` files for per-stream header consistency
-- Allow validating `.wav` output against `.atrac` size/frequency
-- Possibly integrate `.yuk` file structure scanning directly
+- Patch `extract_yuk.cpp` source (or regenerate) to compute proper sample counts.
+- Distribute per-stream `.txth` if needed.
+- Consider including `.hdr` in WAV conversion if it enhances fidelity.
 
-This validator and logger agent is now a cornerstone of clean `.yuk` audio modding and regression-free testing.
+This audit confirms the extractor is **byte-perfect structurally**, but still needs metadata accuracy improvements for clean decoded audio output.
