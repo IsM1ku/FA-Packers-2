@@ -1,39 +1,65 @@
 # AGENTS.md
 
-## 🛠️ Agent: YUK Extractor and Compressor Format Analyst
+## 🛠️ Agent: YUK Format Repair and Validation Lead
 
 ### Description
-This agent reverse-engineered and analyzed the `.yuk` audio container format used in *Full Auto 2: Battlelines* based on the existing source code for the community-made extractor and compressor. The format interleaves 8 ATRAC3 streams per file. The analysis uncovered flaws in how stream data is divided, particularly near the file's beginning and end, which causes audible glitches or stream bleeding.
+This agent was responsible for reverse-engineering, diagnosing, and fixing issues with the `.yuk` audio container format used in *Full Auto 2: Battlelines*. The `.yuk` format contains 8 interleaved ATRAC3 streams and was initially supported by a community extractor and compressor. These tools had critical flaws resulting in broken or glitchy audio after modding.
 
-### Problems Identified
-1. **Incorrect Remainder Division:**  
-   The YUK compressor splits leftover audio data after full chunks using arbitrary division logic that does not guarantee ATRAC3 frame alignment. This causes audio corruption at the start and end of the recompressed `.yuk` file.
+A `.yuk` sample file has now been added to the repo for reference and testing.
 
-2. **Header Handling Inconsistency:**  
-   The compressor skips the first 464 bytes of each ATRAC stream (assumed header), but this is never preserved or reinserted during extraction, potentially corrupting the beginning of streams on re-import.
+---
 
-3. **Lack of Frame Awareness:**  
-   ATRAC3 is a frame-based format (commonly using 0x180-byte frames), and any slicing must respect those boundaries. Current logic does not validate this.
+## 🧩 Problem Summary
 
-### Proposed Fixes
-#### ✅ Frame-Aligned Remainder Handling
-- Calculate the total number of full ATRAC frames in the remainder (`remainder / 0x180`).
-- Distribute only full frames evenly across the 8 streams.
-- Ignore or pad any leftover bytes that do not form a complete frame.
+### 🔴 Frame Alignment Bug
+The original compressor and extractor sliced the remainder of the `.yuk` file using uneven division, causing many streams to end with **incomplete ATRAC3 frames**. ATRAC3 requires that audio data (excluding headers) be aligned to exact multiples of `0x180` (384 bytes). Improper frame alignment caused:
 
-#### ✅ Preserve and Reinsert ATRAC Headers
-- During extraction: save the first 464 bytes of each stream as a header or embedded in `.atrac` output.
-- During compression: prepend the original header to each stream before interleaving.
+- Decoder errors (`Frame decoding error!`)
+- Audio glitches at the beginning or end of tracks
+- Cross-stream corruption
 
-#### ✅ Optional Debug Output
-- Print file size and per-stream chunk sizes after extraction and compression.
-- Log warnings if files are not aligned to expected ATRAC frame sizes.
+### 🔴 Header Handling Inconsistency
+The compressor strips the first 464 bytes of each stream (presumed ATRAC header), but the extractor failed to preserve or reinsert these. This mismatch triggered header validation failures and could break playback in tools like vgmstream or ffmpeg.
 
-#### ✅ Validation Tools
-- Add a verifier tool that confirms if each stream:
-  - Starts with a valid ATRAC header.
-  - Contains only full frames.
-  - Ends cleanly without mid-frame cuts.
+### 🔴 Broken Validation
+A separate validation tool (`validate_yuk.cpp`) was added to detect malformed `.atrac` streams. It showed all streams in many test `.yuk` files were both:
+- Lacking valid `RIFF` headers
+- Not aligned to proper frame size
 
-### Outcome
-This agent's improvements will make custom music modding for Full Auto 2 more reliable, eliminate audio artifacts, and allow future developers to safely modify `.yuk` files without introducing stream corruption.
+---
+
+## 🧪 Fixes Implemented
+
+### ✅ Proper Frame-Aligned Extraction
+The extractor was modified to:
+- Ignore legacy `extraChunks1` / `extraChunks2` logic
+- Use total remainder size to calculate how many **complete 0x180-byte frames** are available
+- Distribute only complete frames evenly to each stream
+
+### ✅ Header Preservation
+- Extractor optionally preserves 464-byte ATRAC headers from each stream
+- Compressor optionally restores them at the start of each stream
+
+### ✅ Validator Tool Added
+- Checks that all 8 `.atrac` streams begin with `RIFF` (unless raw mode)
+- Verifies that stream data (excluding header) is aligned to `0x180` bytes
+- Confirms streams are safe to recompress and inject
+
+---
+
+## 🧰 Repo Assets
+
+- `extract_yuk.cpp`: fixed extractor with frame-aligned stream logic
+- `compress_yuk.cpp`: fixed compressor with optional header reattachment
+- `validate_yuk.cpp`: stream integrity checker
+- `sample.yuk`: added to repository for testing and reference
+
+---
+
+## 🧠 Next Steps
+
+- Consider supporting raw ATRAC mode in the validator for low-level testing
+- Add automated test that validates output before allowing `.yuk` creation
+- Build cross-platform binaries for Linux support
+
+This work greatly improves the reliability of audio modding in Full Auto 2 and allows developers to safely inject high-quality custom soundtracks.
