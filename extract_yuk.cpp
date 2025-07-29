@@ -70,11 +70,10 @@ std::vector<std::string> extractStreams(FILE* file, std::string outputPath){
         for(int j = 0; j < 8; j++){
             fread(buffer, sizeof(char), 0x6000, file);
             if(i == 0){
+                // Save the encoder header separately but also keep it in the output
                 fwrite(buffer, sizeof(char), 464, headerStreams[j]);
-                fwrite(buffer + 464, sizeof(char), 0x6000 - 464, outputStreams[j]);
-            }else{
-                fwrite(buffer, sizeof(char), 0x6000, outputStreams[j]);
             }
+            fwrite(buffer, sizeof(char), 0x6000, outputStreams[j]);
         }
     }
 
@@ -91,7 +90,7 @@ std::vector<std::string> extractStreams(FILE* file, std::string outputPath){
         fclose(headerStreams[i]);
     }
 
-    size_t perStreamSize = 464 + numChunks * 0x6000 + extraFrames * frameSize;
+    size_t perStreamSize = numChunks * 0x6000 + extraFrames * frameSize;
     std::cout << "File size: " << fileSize << " bytes" << std::endl;
     std::cout << "Per-stream size: " << perStreamSize << " bytes" << std::endl;
 
