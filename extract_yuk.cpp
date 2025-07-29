@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#include <cstdio>
 
 bool file_exists(const char *filename)
 {
@@ -30,7 +31,7 @@ bool createDirectoryRecursive(std::string const & dirName, std::error_code & err
     return true;
 }
 
-std::vector<std::string> extractStreams(FILE* file, std::string outputPath){
+std::vector<std::string> extractStreams(FILE* file, const std::string& outputPath, std::vector<size_t>& streamSizes){
     std::vector<std::string> outputFiles;
     std::vector<FILE*> outputStreams;
     std::vector<FILE*> headerStreams;
@@ -85,6 +86,7 @@ std::vector<std::string> extractStreams(FILE* file, std::string outputPath){
         fclose(outputStreams[i]);
         fclose(headerStreams[i]);
         std::cout << "Stream " << i << " total extra frames: " << frameCount[i] << std::endl;
+        streamSizes.push_back(std::filesystem::file_size(outputFiles[i]));
     }
 
     size_t perStreamSize = numChunks * streamBlockSize + (totalExtraFrames / 8) * frameSize;
@@ -94,12 +96,24 @@ std::vector<std::string> extractStreams(FILE* file, std::string outputPath){
     return outputFiles;
 }
 
-void writeHeaderInfo(std::string outputDir){
-    std::string filePath = outputDir + "/atrac/" + ".atrac.txth";
-    FILE* file = fopen(filePath.c_str(), "w");
-    std::string headerInfo = "codec = ATRAC3\nsample_rate = 48000\nchannels = 2\nstart_offset = 0\ninterleave = 0x180\nnum_samples = data_size";
-    fprintf(file, "%s", headerInfo.c_str());
-    fclose(file);
+void writeHeaderInfo(const std::vector<std::string>& streamPaths, const std::vector<size_t>& streamSizes){
+    for(size_t i = 0; i < streamPaths.size(); ++i){
+        std::string filePath = streamPaths[i] + ".txth";
+        FILE* file = fopen(filePath.c_str(), "w");
+        if(!file) continue;
+        size_t numSamples = (streamSizes[i] / 0x180) * 1024;
+        std::string headerInfo =
+            "codec = ATRAC3\n"
+            "sample_rate = 48000\n"
+            "channels = 2\n"
+            "start_offset = 0\n"
+            "interleave = 0x180\n"
+            "frame_size = 0x180\n"
+            "samples_per_frame = 1024\n"
+            "num_samples = " + std::to_string(numSamples);
+        fprintf(file, "%s", headerInfo.c_str());
+        fclose(file);
+    }
 }
 
 void convertStreams(std::vector<std::string> streamPaths, std::string outputPath){
@@ -144,11 +158,12 @@ int main(int argc, char* argv[]){
     }
 
     std::cout << "Extracting ATRAC streams" << std::endl;
-    std::vector<std::string> streamPaths = extractStreams(file, atracPath);
+    std::vector<size_t> streamSizes;
+    std::vector<std::string> streamPaths = extractStreams(file, atracPath, streamSizes);
     fclose(file);
 
     std::cout << "Writing codec .txth file" << std::endl;
-    writeHeaderInfo(outputDir);
+    writeHeaderInfo(streamPaths, streamSizes);
 
     std::string wavPath = outputDir + "/wav/" + inputFile;
     index = wavPath.find_last_of('.');
