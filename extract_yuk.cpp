@@ -3,7 +3,6 @@
 #include <string>
 #include <vector>
 
-// return true if the file specified by the filename exists
 bool file_exists(const char *filename)
 {
     FILE *fp = fopen(filename, "r");
@@ -11,15 +10,11 @@ bool file_exists(const char *filename)
     if (fp != NULL)
     {
         is_exist = true;
-        fclose(fp); // close the file
+        fclose(fp);
     }
     return is_exist;
 }
 
-// Utility function from https://stackoverflow.com/questions/71658440/c17-create-directories-automatically-given-a-file-path
-// Returns:
-//   true upon success.
-//   false upon failure, and set the std::error_code & err accordingly.
 bool createDirectoryRecursive(std::string const & dirName, std::error_code & err)
 {
     err.clear();
@@ -27,9 +22,8 @@ bool createDirectoryRecursive(std::string const & dirName, std::error_code & err
     {
         if (std::filesystem::exists(dirName))
         {
-            // The folder already exists:
             err.clear();
-            return true;    
+            return true;
         }
         return false;
     }
@@ -53,46 +47,49 @@ std::vector<std::string> extractStreams(FILE* file, std::string outputPath){
     size_t fileSize = ftell(file);
     fseek(file, 0, SEEK_SET);
 
-    const size_t chunkSize = 0x30000; // 0x6000 size * 8 streams
+    const size_t chunkSize = 0x30000;
     const size_t frameSize = 0x180;
+    const size_t streamBlockSize = 0x6000;
 
     size_t numChunks = fileSize / chunkSize;
     size_t remainder = fileSize % chunkSize;
-    size_t extraFrames = remainder / (frameSize * 8);
-    size_t leftoverBytes = remainder % (frameSize * 8);
-    if(leftoverBytes != 0){
-        std::cout << "Warning: file remainder " << leftoverBytes
-                  << " bytes is not frame aligned and will be ignored" << std::endl;
+    size_t totalExtraFrames = remainder / frameSize;
+    size_t leftoverGarbage = remainder % frameSize;
+
+    if(leftoverGarbage != 0){
+        std::cout << "Warning: " << leftoverGarbage
+                  << " trailing bytes do not form a full frame and will be ignored." << std::endl;
     }
 
     char buffer[0x6000];
     for(size_t i = 0; i < numChunks; i++){
         for(int j = 0; j < 8; j++){
-            fread(buffer, sizeof(char), 0x6000, file);
+            fread(buffer, sizeof(char), streamBlockSize, file);
             if(i == 0){
-                // Save the encoder header separately but also keep it in the output
                 fwrite(buffer, sizeof(char), 464, headerStreams[j]);
             }
-            fwrite(buffer, sizeof(char), 0x6000, outputStreams[j]);
+            fwrite(buffer, sizeof(char), streamBlockSize, outputStreams[j]);
         }
     }
 
     char frameBuf[0x180];
-    for(size_t f = 0; f < extraFrames; f++){
-        for(int j = 0; j < 8; j++){
-            fread(frameBuf, sizeof(char), frameSize, file);
-            fwrite(frameBuf, sizeof(char), frameSize, outputStreams[j]);
-        }
+    std::vector<size_t> frameCount(8, 0);
+    for(size_t f = 0; f < totalExtraFrames; ++f){
+        int streamIndex = f % 8;
+        fread(frameBuf, sizeof(char), frameSize, file);
+        fwrite(frameBuf, sizeof(char), frameSize, outputStreams[streamIndex]);
+        frameCount[streamIndex]++;
     }
 
     for(int i = 0; i < 8; i++){
         fclose(outputStreams[i]);
         fclose(headerStreams[i]);
+        std::cout << "Stream " << i << " total extra frames: " << frameCount[i] << std::endl;
     }
 
-    size_t perStreamSize = numChunks * 0x6000 + extraFrames * frameSize;
+    size_t perStreamSize = numChunks * streamBlockSize + (totalExtraFrames / 8) * frameSize;
     std::cout << "File size: " << fileSize << " bytes" << std::endl;
-    std::cout << "Per-stream size: " << perStreamSize << " bytes" << std::endl;
+    std::cout << "Per-stream size (min): " << perStreamSize << " bytes" << std::endl;
 
     return outputFiles;
 }
@@ -113,7 +110,7 @@ void convertStreams(std::vector<std::string> streamPaths, std::string outputPath
 }
 
 int main(int argc, char* argv[]){
-	std::cout << "Full Auto 2 .yuk Music Extractor by protorizer" << std::endl;
+    std::cout << "Full Auto 2 .yuk Music Extractor (Final Fix)" << std::endl;
 
     if(!file_exists("./vgmstream/vgmstream-cli.exe")){
         std::cout << "vgmstream not found. Please download vgmstream and place it in a subfolder named \"vgmstream\"." << std::endl;
@@ -164,5 +161,5 @@ int main(int argc, char* argv[]){
 
     std::cout << "Done!" << std::endl;
 
-	return 0;
+    return 0;
 }

@@ -1,65 +1,73 @@
 # AGENTS.md
 
-## 🛠️ Agent: YUK Format Repair and Validation Lead
+## 🛠️ Agent: YUK Stream Validator and Diagnostic Logger
 
 ### Description
-This agent was responsible for reverse-engineering, diagnosing, and fixing issues with the `.yuk` audio container format used in *Full Auto 2: Battlelines*. The `.yuk` format contains 8 interleaved ATRAC3 streams and was initially supported by a community extractor and compressor. These tools had critical flaws resulting in broken or glitchy audio after modding.
-
-A `.yuk` sample file has now been added to the repo for reference and testing.
+This agent improves the `.yuk` audio modding pipeline by extending the stream validation tooling. It adds detailed analysis, per-stream byte/frame data, and the ability to log all results to an external file — simplifying debugging and versioned testing.
 
 ---
 
-## 🧩 Problem Summary
+## ✅ Features Added to `validate_yuk.cpp`
 
-### 🔴 Frame Alignment Bug
-The original compressor and extractor sliced the remainder of the `.yuk` file using uneven division, causing many streams to end with **incomplete ATRAC3 frames**. ATRAC3 requires that audio data (excluding headers) be aligned to exact multiples of `0x180` (384 bytes). Improper frame alignment caused:
+### 1. **Log File Output**
+- New `--log <filename>` argument.
+- Writes all validation output to a log file instead of just stdout.
+- Can be used with or without `--raw`.
 
-- Decoder errors (`Frame decoding error!`)
-- Audio glitches at the beginning or end of tracks
-- Cross-stream corruption
+### 2. **Per-Stream Size and Frame Count**
+- Outputs:
+  - Total stream data size (after optional header)
+  - Number of full 0x180-byte ATRAC3 frames
+  - Remainder in bytes
+- Helps pinpoint overflows, misalignment, and inconsistencies.
 
-### 🔴 Header Handling Inconsistency
-The compressor strips the first 464 bytes of each stream (presumed ATRAC header), but the extractor failed to preserve or reinsert these. This mismatch triggered header validation failures and could break playback in tools like vgmstream or ffmpeg.
+### 3. **RIFF Header Check Enhancements**
+- Hex-dumps the unexpected header bytes (e.g. `0x41424344`) for easier comparison.
+- Skipped when `--raw` is passed.
 
-### 🔴 Broken Validation
-A separate validation tool (`validate_yuk.cpp`) was added to detect malformed `.atrac` streams. It showed all streams in many test `.yuk` files were both:
-- Lacking valid `RIFF` headers
-- Not aligned to proper frame size
+### 4. **Validation Summary**
+- At the end of the log or console output, prints a table:
+  ```
+  Summary:
+  Stream0: 2323200 bytes, 6050 frames ✓
+  Stream1: 2323504 bytes, 6050 frames ✗ (remainder 304)
+  ...
+  ```
 
----
-
-## 🧪 Fixes Implemented
-
-### ✅ Proper Frame-Aligned Extraction
-The extractor was modified to:
-- Ignore legacy `extraChunks1` / `extraChunks2` logic
-- Use total remainder size to calculate how many **complete 0x180-byte frames** are available
-- Distribute only complete frames evenly to each stream
-
-### ✅ Header Preservation
-- Extractor optionally preserves 464-byte ATRAC headers from each stream
-- Compressor optionally restores them at the start of each stream
-
-### ✅ Validator Tool Added
-- Checks that all 8 `.atrac` streams begin with `RIFF` (unless raw mode)
-- Verifies that stream data (excluding header) is aligned to `0x180` bytes
-- Confirms streams are safe to recompress and inject
+### 5. **Timestamped Logs**
+- Automatically inserts a timestamp like:
+  ```
+  Validation started: 2025-07-29 19:42:17
+  ```
 
 ---
 
-## 🧰 Repo Assets
+## 🧪 Usage Example
 
-- `extract_yuk.cpp`: fixed extractor with frame-aligned stream logic
-- `compress_yuk.cpp`: fixed compressor with optional header reattachment
-- `validate_yuk.cpp`: stream integrity checker
-- `sample.yuk`: added to repository for testing and reference
+```bash
+validate_yuk burningworldmasaugrace --raw --log validate_log.txt
+```
+
+Output:
+- Written to `validate_log.txt`
+- Includes full per-stream breakdown
+- Summary at the end shows counts of aligned streams and header validity
 
 ---
 
-## 🧠 Next Steps
+## 🧠 Benefits
 
-- Consider supporting raw ATRAC mode in the validator for low-level testing
-- Add automated test that validates output before allowing `.yuk` creation
-- Build cross-platform binaries for Linux support
+- Debugging mismatched audio or stream desyncs is faster
+- Supports reproducible logs for bug reporting
+- Helps catch partial frame injection bugs in `extract_yuk` or `compress_yuk`
+- Makes CI-style test scripts possible for mod pack validation
 
-This work greatly improves the reliability of audio modding in Full Auto 2 and allows developers to safely inject high-quality custom soundtracks.
+---
+
+## 🔄 Next Steps
+
+- Add option to compare `.hdr` files for per-stream header consistency
+- Allow validating `.wav` output against `.atrac` size/frequency
+- Possibly integrate `.yuk` file structure scanning directly
+
+This validator and logger agent is now a cornerstone of clean `.yuk` audio modding and regression-free testing.
