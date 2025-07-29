@@ -1,6 +1,7 @@
 #include <iostream>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 // return true if the file specified by the filename exists
 bool file_exists(const char *filename)
@@ -38,50 +39,62 @@ bool createDirectoryRecursive(std::string const & dirName, std::error_code & err
 std::vector<std::string> extractStreams(FILE* file, std::string outputPath){
     std::vector<std::string> outputFiles;
     std::vector<FILE*> outputStreams;
+    std::vector<FILE*> headerStreams;
 
     for(int i = 0; i < 8; i++){
         outputFiles.push_back(outputPath + "_Stream" + std::to_string(i) + ".atrac");
         std::cout << "Saving " << outputFiles[i] << std::endl;
         outputStreams.push_back(fopen(outputFiles[i].c_str(), "wb"));
+        std::string headerPath = outputPath + "_Stream" + std::to_string(i) + ".hdr";
+        headerStreams.push_back(fopen(headerPath.c_str(), "wb"));
     }
 
     fseek(file, 0, SEEK_END);
     size_t fileSize = ftell(file);
     fseek(file, 0, SEEK_SET);
 
-    size_t chunkSize = 0x30000; // 0x6000 size * 8 streams
+    const size_t chunkSize = 0x30000; // 0x6000 size * 8 streams
+    const size_t frameSize = 0x180;
 
-    int numChunks = fileSize / chunkSize;
-    int extraChunks1 = 0;
-    int extraChunks2 = 0;
-
-    int remainder = fileSize % chunkSize;
-    if(remainder != 0){
-        numChunks--;
-        int remainingChunks = remainder / 0xC00;
-        extraChunks1 = remainingChunks / 2;
-        extraChunks2 = remainingChunks - extraChunks1;
+    size_t numChunks = fileSize / chunkSize;
+    size_t remainder = fileSize % chunkSize;
+    size_t extraFrames = remainder / (frameSize * 8);
+    size_t leftoverBytes = remainder % (frameSize * 8);
+    if(leftoverBytes != 0){
+        std::cout << "Warning: file remainder " << leftoverBytes
+                  << " bytes is not frame aligned and will be ignored" << std::endl;
     }
 
     char buffer[0x6000];
-    for(int i = 0; i < numChunks; i++){
+    for(size_t i = 0; i < numChunks; i++){
         for(int j = 0; j < 8; j++){
             fread(buffer, sizeof(char), 0x6000, file);
-            fwrite(buffer, sizeof(char), 0x6000, outputStreams[j]);
+            if(i == 0){
+                fwrite(buffer, sizeof(char), 464, headerStreams[j]);
+                fwrite(buffer + 464, sizeof(char), 0x6000 - 464, outputStreams[j]);
+            }else{
+                fwrite(buffer, sizeof(char), 0x6000, outputStreams[j]);
+            }
         }
     }
-    for(int i = 0; i < 8; i++){
-        fread(buffer, sizeof(char), extraChunks1 * 0x180, file);
-        fwrite(buffer, sizeof(char), extraChunks1 * 0x180, outputStreams[i]);
-    }
-    for(int i = 0; i < 8; i++){
-        fread(buffer, sizeof(char), extraChunks2 * 0x180, file);
-        fwrite(buffer, sizeof(char), extraChunks2 * 0x180, outputStreams[i]);
+
+    char frameBuf[0x180];
+    for(size_t f = 0; f < extraFrames; f++){
+        for(int j = 0; j < 8; j++){
+            fread(frameBuf, sizeof(char), frameSize, file);
+            fwrite(frameBuf, sizeof(char), frameSize, outputStreams[j]);
+        }
     }
 
     for(int i = 0; i < 8; i++){
         fclose(outputStreams[i]);
+        fclose(headerStreams[i]);
     }
+
+    size_t perStreamSize = 464 + numChunks * 0x6000 + extraFrames * frameSize;
+    std::cout << "File size: " << fileSize << " bytes" << std::endl;
+    std::cout << "Per-stream size: " << perStreamSize << " bytes" << std::endl;
+
     return outputFiles;
 }
 

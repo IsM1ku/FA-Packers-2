@@ -2,6 +2,9 @@
 #include <filesystem>
 #include <string>
 #include <cstdio>
+#include <vector>
+
+std::vector<std::vector<char>> g_headers;
 
 // return true if the file specified by the filename exists
 bool file_exists(const char *filename)
@@ -37,15 +40,16 @@ bool createDirectoryRecursive(std::string const & dirName, std::error_code & err
 }
 
 std::vector<std::string> readFiles(std::string inputDir){
-	std::vector<std::string> files;
-	size_t fileSize = 0;
-	for(int i = 0; i < 8; i++){
-		std::string filePath = inputDir + "/" + inputDir + "_Stream" + std::to_string(i) + ".wav";
-		if(!file_exists(filePath.c_str())){
-			std::cout << "Error: " << filePath << " not found. Make sure you have 8 .wav files following the proper naming conventions." << std::endl;
-			return files;
-		}
-		FILE* file = fopen(filePath.c_str(), "rb");
+        std::vector<std::string> files;
+        g_headers.clear();
+        size_t fileSize = 0;
+        for(int i = 0; i < 8; i++){
+                std::string filePath = inputDir + "/" + inputDir + "_Stream" + std::to_string(i) + ".wav";
+                if(!file_exists(filePath.c_str())){
+                        std::cout << "Error: " << filePath << " not found. Make sure you have 8 .wav files following the proper naming conventions." << std::endl;
+                        return files;
+                }
+                FILE* file = fopen(filePath.c_str(), "rb");
 		fseek(file, 24, SEEK_SET);
 		int bitrate;
 		fread(&bitrate, sizeof(int), 1, file);
@@ -59,92 +63,104 @@ std::vector<std::string> readFiles(std::string inputDir){
 			std::cout << "ERROR: Files are not the same size. Please ensure all 8 .wav files are exactly the same length." << std::endl;
 			return files;
 		}
-		fileSize = tmp;
-		files.push_back(filePath);
-		fclose(file);
-	}
+                fileSize = tmp;
+                files.push_back(filePath);
+                fclose(file);
 
-	return files;
+                std::string headerPath = inputDir + "/" + inputDir + "_Stream" + std::to_string(i) + ".hdr";
+                FILE* h = fopen(headerPath.c_str(), "rb");
+                if(!h){
+                        std::cout << "Error: header file " << headerPath << " not found." << std::endl;
+                        files.clear();
+                        return files;
+                }
+                std::vector<char> hdr(464);
+                fread(hdr.data(), sizeof(char), 464, h);
+                fclose(h);
+                g_headers.push_back(hdr);
+        }
+
+        return files;
 }
 
 std::vector<FILE*> convertFiles(std::vector<std::string> files){
-	std::vector<FILE*> atracFiles;
+        std::vector<FILE*> atracFiles;
 
-	for(int i = 0; i < files.size(); i++){
-		std::string tmpPath = files[i] + "_" + std::to_string(i);
-		std::string command = ".\\at3tool\\ps3_at3tool.exe -br 144 -e " + files[i] + " " + tmpPath;
+        for(int i = 0; i < files.size(); i++){
+                std::string tmpPath = files[i] + "_" + std::to_string(i);
+                std::string command = ".\\at3tool\\ps3_at3tool.exe -br 144 -e " + files[i] + " " + tmpPath;
         system(command.c_str());
         if(!file_exists(tmpPath.c_str())){ // There was some error in conversion
-        	return atracFiles;
+                return atracFiles;
         }
         FILE* tmpFile = fopen(tmpPath.c_str(), "rb");
+        if(!tmpFile){
+                return atracFiles;
+        }
         atracFiles.push_back(tmpFile);
-	}
+        }
 
-	return atracFiles;
+        return atracFiles;
 }
 
 void interlaceFiles(std::vector<FILE*> files, std::string outputPath){
-	int index = outputPath.find_last_of('/');
-	std::error_code error;
-	if(index != std::string::npos){
-		if(!createDirectoryRecursive(outputPath.substr(0, index).c_str(), error)){
-			std::cout << "ERROR: Could not create directory for destination file: " << error << std::endl;
-			return;
-		}
+        int index = outputPath.find_last_of('/');
+        std::error_code error;
+        if(index != std::string::npos){
+                if(!createDirectoryRecursive(outputPath.substr(0, index).c_str(), error)){
+                        std::cout << "ERROR: Could not create directory for destination file: " << error << std::endl;
+                        return;
+                }
     }
 
     FILE* yuk = fopen(outputPath.c_str(), "wb");
     if(yuk == NULL){
-    	std::cout << "ERROR: Could not create destination file " << outputPath << std::endl;
-    	return;
+        std::cout << "ERROR: Could not create destination file " << outputPath << std::endl;
+        return;
     }
 
-    // Calculate total filesize
-    size_t fileSize = 0;
-    for(int i = 0; i < files.size(); i++){
-    	fseek(files[i], 0, SEEK_END);
-    	fileSize += ftell(files[i]) - 464;
-    	fseek(files[i], 464, SEEK_SET);
+    // Determine stream length from first file
+    fseek(files[0], 0, SEEK_END);
+    size_t dataSize = ftell(files[0]) - 464; // skip encoder header
+    fseek(files[0], 464, SEEK_SET);
+
+    const size_t frameSize = 0x180;
+    const size_t chunkData = 0x6000;
+
+    if(dataSize % frameSize != 0){
+        std::cout << "Warning: stream size not frame aligned, trailing bytes will be ignored" << std::endl;
     }
-
-
-    std::cout << "Calculating chunks" << std::endl;
-
-    size_t chunkSize = 0x30000; // 0x6000 size * 8 streams
-
-    int numChunks = fileSize / chunkSize;
-    int extraChunks1 = 0;
-    int extraChunks2 = 0;
-
-    int remainder = fileSize % chunkSize;
-    if(remainder != 0){
-        numChunks--;
-        int remainingChunks = remainder / 0xC00;
-        extraChunks1 = remainingChunks / 2;
-        extraChunks2 = remainingChunks - extraChunks1;
-    }
+    size_t frames = dataSize / frameSize;
+    size_t numChunks = frames / 64; // 64 frames per 0x6000 block
+    size_t extraFrames = frames % 64;
 
     std::cout << "Writing " << numChunks << " major chunks" << std::endl;
 
     char buffer[0x6000];
-    for(int i = 0; i < numChunks; i++){
+    for(size_t c = 0; c < numChunks; c++){
         for(int j = 0; j < 8; j++){
-            fread(buffer, sizeof(char), 0x6000, files[j]);
-            fwrite(buffer, sizeof(char), 0x6000, yuk);
+            if(c == 0){
+                fwrite(g_headers[j].data(), sizeof(char), 464, yuk);
+                fread(buffer, sizeof(char), chunkData - 464, files[j]);
+                fwrite(buffer, sizeof(char), chunkData - 464, yuk);
+            }else{
+                fread(buffer, sizeof(char), chunkData, files[j]);
+                fwrite(buffer, sizeof(char), chunkData, yuk);
+            }
         }
     }
 
-    std::cout << "Writing " << extraChunks1 + extraChunks2 << " minor chunks" << std::endl;
+    char frameBuf[0x180];
+    std::cout << "Writing " << extraFrames << " leftover frames" << std::endl;
+    for(size_t f = 0; f < extraFrames; f++){
+        for(int j = 0; j < 8; j++){
+            fread(frameBuf, sizeof(char), frameSize, files[j]);
+            fwrite(frameBuf, sizeof(char), frameSize, yuk);
+        }
+    }
 
-    for(int i = 0; i < 8; i++){
-        fread(buffer, sizeof(char), extraChunks1 * 0x180, files[i]);
-        fwrite(buffer, sizeof(char), extraChunks1 * 0x180, yuk);
-    }
-    for(int i = 0; i < 8; i++){
-        fread(buffer, sizeof(char), extraChunks2 * 0x180, files[i]);
-        fwrite(buffer, sizeof(char), extraChunks2 * 0x180, yuk);
-    }
+    size_t totalSize = (464 + frames * frameSize) * 8;
+    std::cout << "Total file size: " << totalSize << " bytes" << std::endl;
 
     std::cout << "Interlacing complete" << std::endl;
 
